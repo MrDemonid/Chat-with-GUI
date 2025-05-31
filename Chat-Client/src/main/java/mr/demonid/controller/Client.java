@@ -9,7 +9,6 @@ import mr.demonid.view.listeners.DisconnectListener;
 import mr.demonid.view.listeners.LoginListener;
 import mr.demonid.view.listeners.SendMessageListener;
 
-import javax.swing.*;
 import java.io.*;
 import java.net.Socket;
 
@@ -70,10 +69,10 @@ public class Client {
                 threadRead.start();
             } else {
                 // что-то непонятно, сюда не должны попасть из-за отсутствия панели подключения
-                view.showMessage("Error: unexpected error! Please restart program!");
+                view.errorMessage("Error: unexpected error! Please restart program!");
             }
         } else {
-            view.showMessage("Bad ip or port format!");
+            view.errorMessage("Bad ip or port format!");
         }
 
     }
@@ -132,7 +131,7 @@ public class Client {
             switchConnectedStatus(ConnectStatus.DISCONNECTED, "Connect error: server not found!");
             return;
         }
-        switchConnectedStatus(ConnectStatus.CONNECTED, "Connected!");
+        switchConnectedStatus(ConnectStatus.CONNECTED, "\u001B[30mConnected!");
         try
         {
             while (!Thread.currentThread().isInterrupted() && !socket.isClosed())
@@ -140,9 +139,7 @@ public class Client {
                 Message message = (Message) reader.readObject();
                 if (message == null)
                     break;                                      // потеря связи с сервером
-                SwingUtilities.invokeLater(() -> {
-                    view.showMessage(message.getAuthorName() + ": " + message.getMessage());
-                });
+                view.innerMessage(message);
             }
         } catch (Exception ignored) {}
         switchConnectedStatus(ConnectStatus.DISCONNECTED, "Connect closed.");
@@ -156,11 +153,11 @@ public class Client {
     private void switchConnectedStatus(ConnectStatus newStatus, String message)
     {
         connectStatus = newStatus;
-        SwingUtilities.invokeLater(() -> {
-            view.setConnectStatus(connectStatus);
+        view.setConnectStatus(connectStatus);
+        if (connectStatus == ConnectStatus.DISCONNECTED)
+            view.errorMessage(message);
+        else
             view.showMessage(message);
-        });
-
     }
 
     /**

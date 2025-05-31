@@ -1,8 +1,9 @@
 package mr.demonid.view;
 
-
 import mr.demonid.commons.Account;
 import mr.demonid.commons.ConnectStatus;
+import mr.demonid.commons.Message;
+import mr.demonid.view.controllers.ANSITextPane;
 import mr.demonid.view.listeners.*;
 
 import javax.swing.*;
@@ -12,17 +13,26 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowEvent;
-import java.util.Arrays;
+import java.lang.reflect.InvocationTargetException;
+import java.util.*;
+
 
 public class ViewSwing extends JFrame implements View {
 
+    // Стили текста
+    public static final String DEFAULT_STYLE = "\u001B[30m";
+    public static final String ERROR_STYLE = "\u001B[31m";
+    public static final String AUTHOR_STYLE = "\u001B[34m";
+    public static final String PRIVATE_STYLE = "\u001B[35m";
+
+    // Дефолтные размеры окон
     private static final int WINDOW_WIDTH = 400;
     private static final int WINDOW_HEIGHT = 600;
     private static final int WINDOW_POS_X = 300;
     private static final int WINDOW_POS_Y = 0;
 
     JPanel controlPanel;
-    JTextArea historyPane;
+    ANSITextPane historyPane;
     JTextField inpIP;
     JTextField inpPort;
     JTextField inpName;
@@ -36,6 +46,7 @@ public class ViewSwing extends JFrame implements View {
 
     private final EventListenerList listenerList;
 
+
     public ViewSwing() throws HeadlessException {
         listenerList = new EventListenerList();
         connectStatus = ConnectStatus.DISCONNECTED;
@@ -45,22 +56,68 @@ public class ViewSwing extends JFrame implements View {
 
     @Override
     public void showMessage(String message) {
-        historyPane.append(message);
-        historyPane.append("\n");
+        if (SwingUtilities.isEventDispatchThread()) {
+            historyPane.appendANSI(message);
+            historyPane.appendANSI("\n");
+        } else {
+            // Вызов не из потока EDT, поэтому перенаправляем в EDT и ждем выполнения
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    historyPane.appendANSI(message);
+                    historyPane.appendANSI("\n");
+                });
+            } catch (InterruptedException | InvocationTargetException ignored) {}
+        }
+    }
+
+
+    @Override
+    public void errorMessage(String message) {
+        showMessage(ERROR_STYLE + message + DEFAULT_STYLE);
+    }
+
+    @Override
+    public void innerMessage(Message message) {
+        if (message.getTargetName() == null)
+            showMessage(AUTHOR_STYLE + message.getAuthorName() + DEFAULT_STYLE + ": " + message.getMessage());
+        else
+            showMessage(PRIVATE_STYLE + message.getAuthorName()
+                    + " to " + message.getTargetName()
+                    + DEFAULT_STYLE + ": " + message.getMessage());
     }
 
     @Override
     public void setConnectStatus(ConnectStatus status) {
-        connectStatus = status;
-        switchConnectStatus();
+        if (SwingUtilities.isEventDispatchThread()) {
+            connectStatus = status;
+            switchConnectStatus();
+        } else {
+            // Вызов не из потока EDT, поэтому перенаправляем в EDT и ждем выполнения
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    connectStatus = status;
+                    switchConnectStatus();
+                });
+            } catch (InterruptedException | InvocationTargetException ignored) {}
+        }
     }
 
+    /**
+     * Установка и чтение данных о пользователе
+     * @param account
+     */
     @Override
     public void setAccount(Account account) {
-        inpName.setText(account.getName());
-        inpIP.setText(account.getIp());
-        inpPort.setText(account.getPort());
-        inpPassword.setText(account.getPassword());
+        if (SwingUtilities.isEventDispatchThread()) {
+            doSetAccount(account);
+        } else {
+            // Вызов не из потока EDT, поэтому перенаправляем в EDT и ждем выполнения
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    doSetAccount(account);
+                });
+            } catch (InterruptedException | InvocationTargetException ignored) {}
+        }
     }
 
     @Override
@@ -95,6 +152,16 @@ public class ViewSwing extends JFrame implements View {
     }
 
     /**
+     * Установка данных о пользователе
+     */
+    private void doSetAccount(Account account) {
+        inpName.setText(account.getName());
+        inpIP.setText(account.getIp());
+        inpPort.setText(account.getPort());
+        inpPassword.setText(account.getPassword());
+    }
+
+    /**
      * Меняет статус окна клиента (скрывая/показывая хидер)
      */
     private void switchConnectStatus()
@@ -126,8 +193,10 @@ public class ViewSwing extends JFrame implements View {
         btnLogin.addActionListener(e -> fireLogin(new LoginEvent(e.getSource())));
 
         btnSend.addActionListener(e -> {
-            showMessage(inpMessage.getText());
-            fireSendMessage(new SendMessageEvent(e.getSource(), inpMessage.getText()));
+            // отсылаем введенный юзером текст
+            String text = inpMessage.getText();
+            showMessage(checkToPrivate(text));
+            fireSendMessage(new SendMessageEvent(e.getSource(), text));
             inpMessage.setText("");
         });
 
@@ -136,8 +205,9 @@ public class ViewSwing extends JFrame implements View {
             public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_ENTER)
                 {
-                    showMessage(inpMessage.getText());
-                    fireSendMessage(new SendMessageEvent(e.getSource(), inpMessage.getText()));
+                    String text = inpMessage.getText();
+                    showMessage(checkToPrivate(text));
+                    fireSendMessage(new SendMessageEvent(e.getSource(), text));
                     inpMessage.setText("");
                 }
             }
@@ -163,6 +233,21 @@ public class ViewSwing extends JFrame implements View {
         for (ActionListener listener : list) {
             inpMessage.removeActionListener(listener);
         }
+    }
+
+
+    /**
+     * Проверка и раскраска текста, если это приватное сообщение.
+     */
+    private String checkToPrivate(String text) {
+        if (text.charAt(0) == '@') {
+            String[] parts = text.split(" ");
+            if (parts.length > 1) {
+                text = PRIVATE_STYLE + "to" + parts[0].replace('@', ' ') + DEFAULT_STYLE + ": "
+                        + String.join(" ", Arrays.copyOfRange(parts, 1, parts.length));
+            }
+        }
+        return text;
     }
 
     /*===========================================================================
@@ -197,8 +282,7 @@ public class ViewSwing extends JFrame implements View {
 
     private Component createHistoryPanel()
     {
-        historyPane = new JTextArea();
-        historyPane.setEditable(false);
+        historyPane = new ANSITextPane();
         return new JScrollPane(historyPane);
     }
 
